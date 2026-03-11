@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str
     OPENAI_MODEL: str
     
+    # DART OpenAPI 설정
+    DART_API_KEY: str = ""
+
+    # Naver Search API 설정
+    NAVER_CLIENT_ID: str = ""
+    NAVER_CLIENT_SECRET: str = ""
+
     # 기본 설정 (추가 환경변수가 필요하면 여기에 추가하세요)
 
     # IMP: DeepAgents 라이브러리 실행 시 Graph 에이전트의 최대 재귀 호출 횟수(Recursion Limit) 설정

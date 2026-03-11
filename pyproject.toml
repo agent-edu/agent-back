@@ -13,6 +13,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "httpx>=0.25.0",
     "opik>=1.10.4",
+    "yfinance>=1.2.0",
 ]
 
 [build-system]
