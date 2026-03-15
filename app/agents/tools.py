@@ -246,6 +246,9 @@ async def naver_search(query: str) -> str:
     Args:
         query: 검색할 키워드 (예: "삼성전자 IPO", "공모주 청약 일정")
     """
+    if not settings.NAVER_CLIENT_ID or not settings.NAVER_CLIENT_SECRET:
+        return "네이버 검색을 사용하려면 .env에 NAVER_CLIENT_ID와 NAVER_CLIENT_SECRET을 설정해주세요."
+
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -281,59 +284,16 @@ async def naver_search(query: str) -> str:
 
 
 @tool
-async def get_stock_price(company_name: str) -> str:
-    """한국 주식의 현재가, 등락률, 거래량 등 실시간 시세 정보를 조회합니다.
+async def get_stock_price(query: str) -> str:
+    """한국 및 해외 주식의 현재가, 등락률, 거래량 등 실시간 시세를 조회합니다.
 
     Args:
-        company_name: 조회할 한국 회사명 (예: "삼성전자", "카카오", "네이버")
+        query: 회사명 또는 티커 심볼 (예: "삼성전자", "카카오", "AAPL", "테슬라", "NVDA", "7203.T")
     """
     import yfinance as yf
 
-    # 회사명 → 종목코드 매핑 (corpCode.xml 캐시 활용)
-    corps = await _load_corp_codes()
-    stock_code = None
-    corp_name_found = None
-
-    for c in corps:
-        if c["stock_code"] and (c["corp_name"] == company_name or company_name in c["corp_name"]):
-            stock_code = c["stock_code"]
-            corp_name_found = c["corp_name"]
-            break
-
-    if not stock_code:
-        return f"'{company_name}'의 종목코드를 찾을 수 없습니다. 상장된 기업명을 확인해주세요."
-
-    ticker_symbol = f"{stock_code}.KS"
-
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        info = ticker.info
-
-        if not info or "currentPrice" not in info:
-            ticker_symbol = f"{stock_code}.KQ"
-            ticker = yf.Ticker(ticker_symbol)
-            info = ticker.info
-
-        if not info or "currentPrice" not in info:
-            return f"'{company_name}'({stock_code})의 시세 정보를 가져올 수 없습니다."
-
-        return _format_stock_info(info, corp_name_found, stock_code, "원")
-
-    except Exception as e:
-        return f"주가 조회 중 오류 발생: {type(e).__name__}"
-
-
-@tool
-async def get_global_stock_price(ticker_or_name: str) -> str:
-    """해외 주식(미국, 일본, 홍콩 등)의 현재가, 등락률, 거래량 등 실시간 시세를 조회합니다.
-
-    Args:
-        ticker_or_name: 종목 티커 또는 회사명 (예: "AAPL", "TSLA", "애플", "테슬라", "NVDA", "7203.T")
-    """
-    import yfinance as yf
-
-    # 자주 검색되는 해외 주식 한글명 → 티커 매핑
-    name_to_ticker = {
+    # 해외 주식 한글명 → 티커 매핑
+    _global_name_to_ticker = {
         "애플": "AAPL", "테슬라": "TSLA", "엔비디아": "NVDA",
         "마이크로소프트": "MSFT", "구글": "GOOGL", "알파벳": "GOOGL",
         "아마존": "AMZN", "메타": "META", "페이스북": "META",
@@ -349,24 +309,53 @@ async def get_global_stock_price(ticker_or_name: str) -> str:
         "TSMC": "TSM", "삼성SDI": "006400.KS",
     }
 
-    # 한글명이면 티커로 변환, 아니면 그대로 사용
-    ticker_symbol = name_to_ticker.get(ticker_or_name, ticker_or_name).upper()
+    # 1) 해외 주식 한글명 매핑 확인
+    if query in _global_name_to_ticker:
+        ticker_symbol = _global_name_to_ticker[query]
+        try:
+            ticker = yf.Ticker(ticker_symbol)
+            info = ticker.info
+            if info and "currentPrice" in info:
+                currency = info.get("currency", "USD")
+                currency_symbol = {"USD": "$", "JPY": "¥", "HKD": "HK$", "EUR": "€", "GBP": "£"}.get(currency, currency)
+                return _format_stock_info(info, info.get("shortName", query), ticker_symbol, currency_symbol)
+        except Exception as e:
+            return f"주가 조회 중 오류 발생: {type(e).__name__}"
 
+    # 2) 한국 주식 — DART 기업코드에서 종목코드 검색
+    corps = await _load_corp_codes()
+    stock_code = None
+    corp_name_found = None
+    for c in corps:
+        if c["stock_code"] and (c["corp_name"] == query or query in c["corp_name"]):
+            stock_code = c["stock_code"]
+            corp_name_found = c["corp_name"]
+            break
+
+    if stock_code:
+        try:
+            for suffix in (".KS", ".KQ"):
+                ticker_symbol = f"{stock_code}{suffix}"
+                ticker = yf.Ticker(ticker_symbol)
+                info = ticker.info
+                if info and "currentPrice" in info:
+                    return _format_stock_info(info, corp_name_found, stock_code, "원")
+            return f"'{query}'({stock_code})의 시세 정보를 가져올 수 없습니다."
+        except Exception as e:
+            return f"주가 조회 중 오류 발생: {type(e).__name__}"
+
+    # 3) 티커 심볼로 직접 조회 (예: "AAPL", "7203.T")
+    ticker_symbol = query.upper()
     try:
         ticker = yf.Ticker(ticker_symbol)
         info = ticker.info
-
         if not info or "currentPrice" not in info:
-            return f"'{ticker_or_name}' (티커: {ticker_symbol})의 시세 정보를 가져올 수 없습니다. 정확한 티커 심볼을 확인해주세요."
-
+            return f"'{query}'의 시세 정보를 가져올 수 없습니다. 정확한 회사명 또는 티커 심볼을 확인해주세요."
         currency = info.get("currency", "USD")
         currency_symbol = {"USD": "$", "JPY": "¥", "HKD": "HK$", "EUR": "€", "GBP": "£"}.get(currency, currency)
-        display_name = info.get("shortName", ticker_or_name)
-
-        return _format_stock_info(info, display_name, ticker_symbol, currency_symbol)
-
+        return _format_stock_info(info, info.get("shortName", query), ticker_symbol, currency_symbol)
     except Exception as e:
-        return f"해외 주가 조회 중 오류 발생: {type(e).__name__}"
+        return f"주가 조회 중 오류 발생: {type(e).__name__}"
 
 
 def _format_stock_info(info: dict, name: str, code: str, currency: str) -> str:

@@ -19,7 +19,7 @@ LangChain Agent (GPT-4.1)
 │  Tool 3: get_ipo_price_info     (DART API)      │
 │  Tool 4: naver_search           (Naver API)     │
 │  Tool 5: get_stock_price        (yfinance)      │
-│  Tool 6: get_global_stock_price (yfinance)      │
+│         (한국 + 해외 주식 통합 조회)              │
 └─────────────────────────────────────────────────┘
     ↓
 SSE 스트리밍 응답 (step:model → step:tools → step:done)
@@ -27,7 +27,7 @@ SSE 스트리밍 응답 (step:model → step:tools → step:done)
 
 ---
 
-## 채팅으로 조회 가능한 기능 (6개 Tool)
+## 채팅으로 조회 가능한 기능 (5개 Tool)
 
 ### Tool 1: `search_ipo_disclosure` - IPO 공시 검색
 - **API**: DART OpenAPI `list.json`
@@ -48,22 +48,18 @@ SSE 스트리밍 응답 (step:model → step:tools → step:done)
 - **API**: Naver Search API `news.json`
 - **기능**: 최신 주식/IPO 관련 뉴스 검색
 - **질문 예시**: "최근 공모주 뉴스", "삼성전자 관련 뉴스 검색해줘"
+- **참고**: `.env`에 `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET` 미설정 시 안내 메시지 반환
 
-### Tool 5: `get_stock_price` - 실시간 주가 조회
+### Tool 5: `get_stock_price` - 한국/해외 주식 통합 시세 조회
 - **라이브러리**: yfinance
-- **기능**: 현재가, 등락률, 거래량, 시가총액, 52주 고/저 등
-- **질문 예시**: "삼성전자 현재 주가", "카카오 시세 알려줘"
-
-### Tool 6: `get_global_stock_price` - 해외 주식 시세 조회
-- **라이브러리**: yfinance
-- **기능**: 미국, 일본, 홍콩 등 해외 주식 실시간 시세 (한글명 또는 티커 심볼 사용 가능)
-- **지원 시장**: NYSE, NASDAQ, TSE(일본), HKEX(홍콩) 등
-- **질문 예시**: "애플 주가 알려줘", "테슬라 현재가", "NVDA 시세", "토요타 주가"
+- **기능**: 한국 및 해외 주식의 현재가, 등락률, 거래량, 시가총액, 52주 고/저 등
+- **지원 시장**: KRX(한국), NYSE, NASDAQ, TSE(일본), HKEX(홍콩) 등
+- **질문 예시**: "삼성전자 현재 주가", "애플 주가 알려줘", "NVDA 시세", "토요타 주가"
 
 ### 복합 질문 (에이전트가 Tool을 자동 조합)
 - "삼성전자 종합 분석해줘" → 기업 정보 + 주가 시세 + 최신 뉴스를 순차 호출
 - "XX회사 IPO 전체 분석해줘" → 공시 검색 + 기업 정보 + 공모가 정보
-- "애플이랑 삼성전자 비교해줘" → 해외 주가 + 한국 주가 조회 후 비교 분석
+- "애플이랑 삼성전자 비교해줘" → 통합 주가 조회 후 비교 분석
 
 ---
 
@@ -74,7 +70,7 @@ app/
 ├── agents/
 │   ├── tools.py          # 5개 도구 함수 (DART, Naver, yfinance)
 │   ├── prompts.py        # 주식 전문가 시스템 프롬프트
-│   └── stock_agent.py    # create_stock_agent() - LangChain create_agent
+│   └── stock_agent.py    # create_stock_agent() - LangChain create_agent + InMemorySaver
 ├── services/
 │   └── agent_service.py  # AgentExecutor SSE 스트리밍
 ├── core/
@@ -108,11 +104,12 @@ app/
 
 ### 1. 기업코드 매핑 (corpCode.xml 캐시)
 - DART API는 `corp_code`로 기업을 식별하지만, 사용자는 회사명으로 질문
-- 서버 기동 시 DART `corpCode.xml` ZIP을 다운로드하여 메모리 캐시
+- 서버 시작 시(`lifespan`) DART `corpCode.xml` ZIP을 다운로드하여 메모리 캐시 — 첫 요청 지연 방지
 - 상장사 우선 매칭 → 정확 일치 → 부분 일치 순으로 검색
 
 ### 2. LangChain create_agent
-- `langchain.agents.create_agent(model, tools, system_prompt)` 사용
+- `langchain.agents.create_agent(model, tools, system_prompt, checkpointer)` 사용
+- `InMemorySaver` checkpointer로 멀티턴 대화 지원
 - LangGraph 기반 `CompiledStateGraph` 반환
 - `astream(stream_mode="updates")`로 SSE 스트리밍
 
@@ -141,7 +138,6 @@ curl -N -X POST http://localhost:8000/api/v1/chat \
 - [x] DART 공시 검색 (`search_ipo_disclosure`)
 - [x] 기업 정보 조회 (`get_company_info`) - 삼성전자(005930) 정확 매칭
 - [x] 네이버 뉴스 검색 (`naver_search`)
-- [x] 한국 주식 실시간 주가 조회 (`get_stock_price`) - 삼성전자 확인
-- [x] 해외 주식 실시간 주가 조회 (`get_global_stock_price`) - 애플 $261.06 확인
+- [x] 한국/해외 주식 통합 시세 조회 (`get_stock_price`) - 삼성전자, 애플 확인
 - [x] SSE 스트리밍 (step:model → step:tools → step:done)
 - [x] 복합 질문 다중 도구 체이닝

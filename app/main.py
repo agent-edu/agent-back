@@ -1,4 +1,6 @@
 import time
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -6,10 +8,22 @@ from app.api.routes.threads import threads_router
 from app.api.routes.chat import chat_router
 from app.utils.logger import custom_logger
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """서버 시작 시 DART 기업코드를 미리 로딩합니다."""
+    from app.agents.tools import _load_corp_codes
+    custom_logger.info("DART 기업코드 로딩 시작...")
+    await _load_corp_codes()
+    custom_logger.info("DART 기업코드 로딩 완료")
+    yield
+
+
 app = FastAPI(
     title="Edu Agent Template",
     description="LangChain 기반 에이전트 교육용 템플릿",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 api_router = APIRouter(prefix=settings.API_V1_PREFIX)
