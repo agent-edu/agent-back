@@ -16,6 +16,16 @@ async def lifespan(app: FastAPI):
     custom_logger.info("DART 기업코드 로딩 시작...")
     await _load_corp_codes()
     custom_logger.info("DART 기업코드 로딩 완료")
+
+    if settings.OPIK:
+        import opik
+        opik.configure(
+            url=settings.OPIK.URL_OVERRIDE,
+            use_local=True,
+            force=True,
+        )
+        custom_logger.info("Opik 트레이싱 초기화 완료")
+
     yield
 
 

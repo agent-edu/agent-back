@@ -4,6 +4,7 @@ import uuid
 
 from langchain_core.messages import HumanMessage
 
+from app.core.config import settings
 from app.utils.logger import log_execution, custom_logger
 
 
@@ -24,9 +25,23 @@ class AgentService:
 
             custom_logger.info(f"사용자 메시지: {user_messages}")
 
+            callbacks = []
+            if settings.OPIK:
+                from opik.integrations.langchain import OpikTracer
+                opik_tracer = OpikTracer(
+                    project_name=settings.OPIK.PROJECT,
+                    tags=["chat"],
+                    metadata={"thread_id": str(thread_id)},
+                )
+                callbacks.append(opik_tracer)
+
+            stream_config = {"configurable": {"thread_id": str(thread_id)}}
+            if callbacks:
+                stream_config["callbacks"] = callbacks
+
             agent_stream = self.agent.astream(
                 {"messages": [HumanMessage(content=user_messages)]},
-                config={"configurable": {"thread_id": str(thread_id)}},
+                config=stream_config,
                 stream_mode="updates",
             )
 
