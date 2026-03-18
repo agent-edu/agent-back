@@ -1,0 +1,36 @@
+input,expected_tool,category
+삼성전자 현재 주가 알려줘,get_stock_price,주가조회_한국
+카카오 주가 얼마야?,get_stock_price,주가조회_한국
+현대차 오늘 시세 알려줘,get_stock_price,주가조회_한국
+SK하이닉스 주가 조회해줘,get_stock_price,주가조회_한국
+네이버 주가 어때?,get_stock_price,주가조회_한국
+테슬라 주가 알려줘,get_stock_price,주가조회_해외
+애플 현재가 얼마야?,get_stock_price,주가조회_해외
+엔비디아 시세 조회해줘,get_stock_price,주가조회_해외
+AAPL 주가 보여줘,get_stock_price,주가조회_해외
+마이크로소프트 주가 얼마야?,get_stock_price,주가조회_해외
+삼성전자 기업정보 알려줘,get_company_info,기업정보
+카카오 어떤 회사야?,get_company_info,기업정보
+현대자동차 대표이사가 누구야?,get_company_info,기업정보
+LG에너지솔루션 설립일 알려줘,get_company_info,기업정보
+네이버 홈페이지 주소 알려줘,get_company_info,기업정보
+최근 IPO 공시 검색해줘,search_ipo_disclosure,IPO공시
+2024년 증권신고서 검색해줘,search_ipo_disclosure,IPO공시
+올해 상장한 기업 공시 알려줘,search_ipo_disclosure,IPO공시
+LG에너지솔루션 IPO 공시 찾아줘,search_ipo_disclosure,IPO공시
+최근 투자설명서 제출한 기업 알려줘,search_ipo_disclosure,IPO공시
+카카오뱅크 공모가 얼마였어?,get_ipo_price_info,공모가
+LG에너지솔루션 공모가 정보 알려줘,get_ipo_price_info,공모가
+최근 상장한 기업 공모가 조회해줘,get_ipo_price_info,공모가
+삼성전자 최신 뉴스 알려줘,naver_search,뉴스검색
+공모주 청약 일정 알려줘,naver_search,뉴스검색
+테슬라 관련 뉴스 찾아줘,naver_search,뉴스검색
+오늘 주식시장 동향 알려줘,naver_search,뉴스검색
+IPO 시장 최신 소식 알려줘,naver_search,뉴스검색
+삼성전자 종합 분석해줘,"get_stock_price,get_company_info,naver_search",종합분석
+카카오 투자 정보 종합적으로 알려줘,"get_stock_price,get_company_info,naver_search",종합분석
+PER이 뭐야?,none,일반지식
+주식 분할이 뭔가요?,none,일반지식
+공모주 청약 방법 알려줘,none,일반지식
+코스피와 코스닥 차이가 뭐야?,none,일반지식
+배당주 투자 전략 알려줘,none,일반지식
