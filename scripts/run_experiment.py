@@ -67,12 +67,23 @@ def evaluation_task(dataset_item: dict) -> dict:
 
 async def _run_agent(user_input: str, thread_id: str) -> dict:
     """에이전트를 실행하고 호출된 도구와 최종 응답을 반환합니다."""
+    from opik.integrations.langchain import OpikTracer
+
+    opik_tracer = OpikTracer(
+        project_name="doo-project",
+        tags=["experiment"],
+        metadata={"thread_id": thread_id},
+    )
+
     called_tools = []
     final_output = ""
 
     async for chunk in agent.astream(
         {"messages": [HumanMessage(content=user_input)]},
-        config={"configurable": {"thread_id": thread_id}},
+        config={
+            "configurable": {"thread_id": thread_id},
+            "callbacks": [opik_tracer],
+        },
         stream_mode="updates",
     ):
         for step, event in chunk.items():
