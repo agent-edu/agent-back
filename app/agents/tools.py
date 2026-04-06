@@ -3,12 +3,36 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 import httpx
+from elasticsearch import Elasticsearch
 from langchain_core.tools import tool
+from langchain_openai import OpenAIEmbeddings
 
 from app.core.config import settings
 
 # 기업코드 캐시 (서버 기동 중 메모리에 유지, 한국 주식 한글명 → 종목코드 변환용)
 _corp_code_cache: list[dict] | None = None
+
+# ES 클라이언트 캐시
+_es_client: Elasticsearch | None = None
+
+RESEARCH_INDEX = "naver-research-reports"
+
+
+def _get_es_client() -> Elasticsearch | None:
+    """Elasticsearch 클라이언트를 반환한다 (싱글턴)."""
+    global _es_client
+    if _es_client is not None:
+        return _es_client
+
+    if not settings.ES_URL or not settings.ES_PASSWORD:
+        return None
+
+    _es_client = Elasticsearch(
+        settings.ES_URL,
+        basic_auth=(settings.ES_USER, settings.ES_PASSWORD),
+        verify_certs=False,
+    )
+    return _es_client
 
 
 async def _load_corp_codes() -> list[dict]:
@@ -216,3 +240,60 @@ def _format_stock_info(info: dict, name: str, code: str, currency: str) -> str:
         lines.append(f"EPS: {eps:{fmt}}{currency}")
 
     return "\n".join(lines)
+
+
+@tool
+async def search_research_reports(query: str) -> str:
+    """증권사 리서치 리포트에서 종목 분석, 산업 전망, 목표주가, 투자의견 등을 검색합니다.
+    Elasticsearch에 적재된 네이버 증권 리서치 리포트(종목분석, 산업분석, 경제분석 등)를 하이브리드 검색합니다.
+
+    Args:
+        query: 검색 키워드 (예: "삼성전자 실적 전망", "반도체 산업 분석", "2차전지 투자의견")
+    """
+    es = _get_es_client()
+    if es is None:
+        return "리서치 리포트 검색을 사용하려면 .env에 ES_URL, ES_USER, ES_PASSWORD를 설정해주세요."
+
+    try:
+        # 쿼리 임베딩 생성
+        embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            api_key=settings.OPENAI_API_KEY,
+        )
+        query_vector = await embeddings.aembed_query(query)
+
+        # Hybrid 검색 (BM25 + Vector)
+        resp = es.search(
+            index=RESEARCH_INDEX,
+            body={
+                "query": {"match": {"content": query}},
+                "knn": {
+                    "field": "content_vector",
+                    "query_vector": query_vector,
+                    "k": 5,
+                    "num_candidates": 50,
+                },
+                "size": 5,
+            },
+        )
+    except Exception as e:
+        return f"리서치 리포트 검색 실패: {type(e).__name__}: {e}"
+
+    hits = resp["hits"]["hits"]
+    if not hits:
+        return f"'{query}'에 대한 리서치 리포트 검색 결과가 없습니다."
+
+    results = []
+    for i, hit in enumerate(hits, 1):
+        source = hit["_source"]
+        meta = source.get("metadata", {})
+        content = source["content"]
+
+        header = f"[{i}] {meta.get('title', '제목 없음')}"
+        if meta.get("stock_name"):
+            header += f" - {meta['stock_name']}"
+        header += f" ({meta.get('broker', '증권사 미상')}, {meta.get('date', '')})"
+
+        results.append(f"{header}\n{content}")
+
+    return f"'{query}' 리서치 리포트 검색 결과 ({len(hits)}건):\n\n" + "\n\n---\n\n".join(results)

@@ -3,7 +3,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agents.prompts import system_prompt
-from app.agents.tools import get_stock_price, naver_search
+from app.agents.tools import get_stock_price, naver_search, search_research_reports
 from app.core.config import settings
 
 # 모듈 레벨 싱글턴 — 멀티턴 대화를 위한 체크포인터
@@ -18,7 +18,7 @@ def create_stock_agent():
         temperature=0,
     )
 
-    tools = [get_stock_price, naver_search]
+    tools = [get_stock_price, naver_search, search_research_reports]
 
     agent = create_agent(
         model=llm,
