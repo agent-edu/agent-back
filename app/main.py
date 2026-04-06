@@ -11,7 +11,7 @@ from app.utils.logger import custom_logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """서버 시작 시 DART 기업코드를 미리 로딩합니다."""
+    """서버 시작 시 초기화 작업을 수행합니다."""
     from app.agents.tools import _load_corp_codes
     custom_logger.info("DART 기업코드 로딩 시작...")
     await _load_corp_codes()

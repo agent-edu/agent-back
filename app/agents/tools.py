@@ -7,25 +7,8 @@ from langchain_core.tools import tool
 
 from app.core.config import settings
 
-DART_BASE_URL = "https://opendart.fss.or.kr/api"
-
-# 기업코드 캐시 (서버 기동 중 메모리에 유지)
+# 기업코드 캐시 (서버 기동 중 메모리에 유지, 한국 주식 한글명 → 종목코드 변환용)
 _corp_code_cache: list[dict] | None = None
-
-
-async def _dart_get(path: str, params: dict) -> dict:
-    """DART API GET 요청을 수행하고 JSON 응답을 반환합니다."""
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(f"{DART_BASE_URL}/{path}", params=params)
-            resp.raise_for_status()
-            return resp.json()
-    except httpx.HTTPStatusError as e:
-        return {"status": "HTTP_ERROR", "message": f"HTTP {e.response.status_code} 오류"}
-    except httpx.RequestError:
-        return {"status": "NETWORK_ERROR", "message": "네트워크 연결 오류"}
-    except Exception:
-        return {"status": "UNKNOWN_ERROR", "message": "응답 처리 중 오류 발생"}
 
 
 async def _load_corp_codes() -> list[dict]:
@@ -37,7 +20,7 @@ async def _load_corp_codes() -> list[dict]:
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.get(
-                f"{DART_BASE_URL}/corpCode.xml",
+                "https://opendart.fss.or.kr/api/corpCode.xml",
                 params={"crtfc_key": settings.DART_API_KEY},
             )
             resp.raise_for_status()
@@ -63,180 +46,6 @@ async def _load_corp_codes() -> list[dict]:
         return corps
     except Exception:
         return []
-
-
-async def _find_corp_code(company_name: str) -> str | None:
-    """회사명으로 DART 기업코드를 검색합니다."""
-    corps = await _load_corp_codes()
-    if not corps:
-        return None
-
-    # 1) 정확히 일치하는 상장사 우선
-    for c in corps:
-        if c["corp_name"] == company_name and c["stock_code"]:
-            return c["corp_code"]
-
-    # 2) 정확히 일치 (비상장 포함)
-    for c in corps:
-        if c["corp_name"] == company_name:
-            return c["corp_code"]
-
-    # 3) 회사명을 포함하는 상장사
-    for c in corps:
-        if company_name in c["corp_name"] and c["stock_code"]:
-            return c["corp_code"]
-
-    # 4) 회사명을 포함 (비상장 포함)
-    for c in corps:
-        if company_name in c["corp_name"]:
-            return c["corp_code"]
-
-    return None
-
-
-@tool
-async def search_ipo_disclosure(
-    corp_name: str = "",
-    begin_date: str = "",
-    end_date: str = "",
-) -> str:
-    """DART에서 IPO 관련 공시(증권신고서, 투자설명서 등)를 검색합니다.
-
-    Args:
-        corp_name: 회사명 (빈 문자열이면 전체 검색)
-        begin_date: 검색 시작일 (YYYYMMDD 형식, 예: 20240101)
-        end_date: 검색 종료일 (YYYYMMDD 형식, 예: 20240331)
-    """
-    params = {
-        "crtfc_key": settings.DART_API_KEY,
-        "pblntf_ty": "I",  # I: 증권신고(지분증권)
-        "page_count": 10,
-    }
-    if corp_name:
-        corp_code = await _find_corp_code(corp_name)
-        if corp_code:
-            params["corp_code"] = corp_code
-    if begin_date:
-        params["bgn_de"] = begin_date
-    if end_date:
-        params["end_de"] = end_date
-
-    data = await _dart_get("list.json", params)
-
-    if data.get("status") != "000":
-        return f"공시 검색 실패: {data.get('message', '알 수 없는 오류')}"
-
-    items = data.get("list", [])
-    if not items:
-        return "검색 결과가 없습니다."
-
-    results = []
-    for item in items:
-        results.append(
-            f"- [{item.get('report_nm', '')}] {item.get('corp_name', '')} "
-            f"(접수일: {item.get('rcept_dt', '')}, 접수번호: {item.get('rcept_no', '')})"
-        )
-    return f"총 {len(items)}건의 IPO 관련 공시:\n" + "\n".join(results)
-
-
-@tool
-async def get_company_info(company_name: str) -> str:
-    """DART에서 기업 개황(업종, 대표자, 설립일, 홈페이지 등)을 조회합니다.
-
-    Args:
-        company_name: 조회할 회사명
-    """
-    corp_code = await _find_corp_code(company_name)
-    if not corp_code:
-        return f"'{company_name}'에 해당하는 기업을 찾을 수 없습니다."
-
-    params = {
-        "crtfc_key": settings.DART_API_KEY,
-        "corp_code": corp_code,
-    }
-    data = await _dart_get("company.json", params)
-
-    if data.get("status") != "000":
-        return f"기업 정보 조회 실패: {data.get('message', '알 수 없는 오류')}"
-
-    info_lines = [
-        f"회사명: {data.get('corp_name', '')}",
-        f"영문명: {data.get('corp_name_eng', '')}",
-        f"종목코드: {data.get('stock_code', '')}",
-        f"대표자: {data.get('ceo_nm', '')}",
-        f"법인구분: {data.get('corp_cls', '')}",
-        f"업종코드: {data.get('induty_code', '')}",
-        f"설립일: {data.get('est_dt', '')}",
-        f"결산월: {data.get('acc_mt', '')}",
-        f"홈페이지: {data.get('hm_url', '')}",
-        f"전화번호: {data.get('phn_no', '')}",
-        f"주소: {data.get('adres', '')}",
-    ]
-    return "\n".join(info_lines)
-
-
-@tool
-async def get_ipo_price_info(corp_name: str) -> str:
-    """DART 증권신고서에서 공모가격 정보(공모가 밴드, 확정 공모가, 공모 주식수 등)를 조회합니다.
-
-    Args:
-        corp_name: 조회할 회사명
-    """
-    corp_code = await _find_corp_code(corp_name)
-    if not corp_code:
-        return f"'{corp_name}'에 해당하는 기업을 찾을 수 없습니다."
-
-    # 증권신고서 - 증권 발행실적 조회 (최근 사업연도)
-    from datetime import datetime
-    current_year = str(datetime.now().year)
-
-    for year in [current_year, str(int(current_year) - 1)]:
-        for reprt_code in ["11011", "11012", "11013", "11014"]:
-            params = {
-                "crtfc_key": settings.DART_API_KEY,
-                "corp_code": corp_code,
-                "bsns_year": year,
-                "reprt_code": reprt_code,
-            }
-            data = await _dart_get("irdsSttus.json", params)
-
-            if data.get("status") == "000" and data.get("list"):
-                items = data["list"]
-                results = []
-                for item in items:
-                    results.append(
-                        f"- 증권종류: {item.get('stk_knd', '')}, "
-                        f"발행주식수: {item.get('stk_cnt', '')}, "
-                        f"액면가: {item.get('fv', '')}, "
-                        f"발행가: {item.get('issue_p', '')}"
-                    )
-                return f"{corp_name} 공모가격 정보 ({year}년):\n" + "\n".join(results)
-
-    return await _fallback_ipo_info(corp_name, corp_code)
-
-
-async def _fallback_ipo_info(corp_name: str, corp_code: str) -> str:
-    """증권신고서 API 실패 시 공시 목록에서 IPO 관련 공시를 검색하여 요약합니다."""
-    params = {
-        "crtfc_key": settings.DART_API_KEY,
-        "corp_code": corp_code,
-        "pblntf_ty": "I",
-        "page_count": 5,
-    }
-    data = await _dart_get("list.json", params)
-
-    if data.get("status") != "000" or not data.get("list"):
-        return f"'{corp_name}'의 공모가격 정보를 찾을 수 없습니다. 아직 증권신고서가 제출되지 않았을 수 있습니다."
-
-    items = data.get("list", [])
-    results = [f"'{corp_name}' 관련 IPO 공시 목록:"]
-    for item in items:
-        results.append(
-            f"- [{item.get('report_nm', '')}] 접수일: {item.get('rcept_dt', '')} "
-            f"(접수번호: {item.get('rcept_no', '')})"
-        )
-    results.append("\n※ 상세 공모가격은 해당 증권신고서 본문에서 확인할 수 있습니다.")
-    return "\n".join(results)
 
 
 @tool
@@ -344,7 +153,7 @@ async def get_stock_price(query: str) -> str:
         except Exception as e:
             return f"주가 조회 중 오류 발생: {type(e).__name__}"
 
-    # 3) 티커 심볼로 직접 조회 (예: "AAPL", "7203.T")
+    # 3) 티커 심볼로 직접 조회 (예: "AAPL", "005930.KS", "7203.T")
     ticker_symbol = query.upper()
     try:
         ticker = yf.Ticker(ticker_symbol)

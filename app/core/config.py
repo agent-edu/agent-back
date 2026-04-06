@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str
     OPENAI_MODEL: str
     
-    # DART OpenAPI 설정
+    # DART OpenAPI 설정 (한국 주식 한글명 → 종목코드 변환용)
     DART_API_KEY: str = ""
 
     # Naver Search API 설정
