@@ -149,6 +149,11 @@ async def supervisor_synthesize(state: SupervisorState) -> dict:
 
     # 서브에이전트 결과 종합
     combined = "\n\n---\n\n".join(sub_results)
+    query_type = state.get("query_type", "")
+
+    bull_bear_instruction = ""
+    if query_type == "comprehensive":
+        bull_bear_instruction = "\n반드시 Bull/Bear 양쪽 관점(각 최소 2개 근거)을 포함하여 종합 의견을 제시하세요."
 
     synthesis_prompt = f"""{supervisor_prompt}
 
@@ -159,8 +164,7 @@ async def supervisor_synthesize(state: SupervisorState) -> dict:
 서브에이전트 분석 결과:
 {combined}
 
-위 분석 결과를 바탕으로 종합적인 최종 답변을 작성하세요.
-여러 서브에이전트가 분석한 경우 Bull/Bear 관점을 포함하세요."""
+위 분석 결과를 바탕으로 종합적인 최종 답변을 작성하세요.{bull_bear_instruction}"""
 
     resp = await llm.ainvoke([HumanMessage(content=synthesis_prompt)])
     return {"messages": [AIMessage(content=resp.content)]}

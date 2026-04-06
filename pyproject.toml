@@ -16,6 +16,7 @@ dependencies = [
     "yfinance>=1.2.0",
     "elasticsearch>=8.0.0",
     "langgraph-checkpoint-sqlite>=3.0.3",
+    "nest-asyncio>=1.6.0",
 ]
 
 [build-system]

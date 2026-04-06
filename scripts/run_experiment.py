@@ -1,12 +1,11 @@
 """
-Opik Experiment 실행 스크립트
+Opik Experiment 실행 스크립트 (멀티에이전트 버전)
 
 사용법:
     python -m scripts.run_experiment
 
-Dataset CSV를 Opik에 등록하고, 에이전트를 실행하여 평가 메트릭을 측정합니다.
-기존 규칙 기반 메트릭(ToolAccuracy, ResponseQuality)에 더해
-LLM-as-Judge 메트릭(정확성, 완전성, 유용성)으로 답변 품질을 평가합니다.
+멀티에이전트(Supervisor + 3개 서브에이전트) 구조에 맞춰
+노드명 기반으로 호출된 도구를 추적하고, LLM-as-Judge로 품질을 평가합니다.
 """
 
 import asyncio
@@ -14,6 +13,7 @@ import csv
 import json
 import uuid
 
+import nest_asyncio
 from openai import OpenAI
 from opik import Opik, track
 from opik.evaluation import evaluate
@@ -22,6 +22,24 @@ from langchain_core.messages import HumanMessage
 
 from app.agents.stock_agent import create_stock_agent
 from app.core.config import settings
+
+# asyncio.run() 중첩 허용 (Opik evaluate 내부에서 이벤트 루프 사용)
+nest_asyncio.apply()
+
+
+# ──────────────────────────────────────────────
+# 멀티에이전트 노드 → 도구 매핑
+# ──────────────────────────────────────────────
+NODE_TO_TOOLS = {
+    "market_analyst": ["get_stock_price", "get_technical_indicators"],
+    "fundamental_analyst": ["get_financial_summary", "compare_stocks"],
+    "research_analyst": ["search_research_reports", "naver_search"],
+    "all_analysts": [
+        "get_stock_price", "get_technical_indicators",
+        "get_financial_summary", "compare_stocks",
+        "search_research_reports", "naver_search",
+    ],
+}
 
 
 # ──────────────────────────────────────────────
@@ -50,12 +68,9 @@ def setup_dataset(client: Opik, csv_path: str, dataset_name: str) -> None:
 # ──────────────────────────────────────────────
 # 2) 에이전트 실행 Task
 # ──────────────────────────────────────────────
-agent = create_stock_agent()
-
-
-@track(name="stock_agent_eval")
+@track(name="stock_agent_eval_multi")
 def evaluation_task(dataset_item: dict) -> dict:
-    """Dataset 항목 하나에 대해 에이전트를 실행합니다."""
+    """Dataset 항목 하나에 대해 멀티에이전트를 실행합니다."""
     user_input = dataset_item["input"]
     thread_id = str(uuid.uuid4())
 
@@ -66,16 +81,18 @@ def evaluation_task(dataset_item: dict) -> dict:
 
 
 async def _run_agent(user_input: str, thread_id: str) -> dict:
-    """에이전트를 실행하고 호출된 도구와 최종 응답을 반환합니다."""
+    """멀티에이전트를 실행하고 호출된 노드와 최종 응답을 반환합니다."""
     from opik.integrations.langchain import OpikTracer
+
+    agent = await create_stock_agent()
 
     opik_tracer = OpikTracer(
         project_name="doo-project",
-        tags=["experiment"],
+        tags=["experiment", "multi-agent"],
         metadata={"thread_id": thread_id},
     )
 
-    called_tools = []
+    called_nodes = []
     final_output = ""
 
     async for chunk in agent.astream(
@@ -86,31 +103,34 @@ async def _run_agent(user_input: str, thread_id: str) -> dict:
         },
         stream_mode="updates",
     ):
-        for step, event in chunk.items():
-            if not event or step not in ("model", "tools"):
+        for node_name, event in chunk.items():
+            if not event:
                 continue
 
-            messages = event.get("messages", [])
-            if not messages:
+            # 라우팅/분류 노드는 스킵
+            if node_name in ("classify", "planner"):
                 continue
 
-            message = messages[0]
+            # 서브에이전트 노드 기록
+            if node_name in NODE_TO_TOOLS:
+                called_nodes.append(node_name)
 
-            if step == "model":
-                tool_calls = getattr(message, "tool_calls", None)
-                if tool_calls:
-                    called_tools.extend([t["name"] for t in tool_calls])
-                else:
-                    content = getattr(message, "content", "")
+            # synthesize → 최종 응답
+            if node_name == "synthesize":
+                messages = event.get("messages", [])
+                if messages:
+                    content = getattr(messages[-1], "content", "")
                     if content:
                         final_output = content
 
-            elif step == "tools":
-                pass  # 도구 실행 결과는 에이전트가 내부적으로 처리
+    # 노드명 → 도구 매핑으로 called_tools 추론
+    called_tools = set()
+    for node in called_nodes:
+        called_tools.update(NODE_TO_TOOLS.get(node, []))
 
     return {
         "output": final_output,
-        "called_tools": ",".join(sorted(set(called_tools))) if called_tools else "none",
+        "called_tools": ",".join(sorted(called_tools)) if called_tools else "none",
     }
 
 
@@ -118,7 +138,10 @@ async def _run_agent(user_input: str, thread_id: str) -> dict:
 # 3) 평가 메트릭 정의
 # ──────────────────────────────────────────────
 class ToolAccuracy(base_metric.BaseMetric):
-    """에이전트가 올바른 도구를 호출했는지 평가합니다."""
+    """에이전트가 올바른 도구를 호출했는지 평가합니다.
+    멀티에이전트에서는 서브에이전트 단위로 도구가 묶이므로,
+    expected_tool이 called_tools에 포함되는지로 판단합니다.
+    """
 
     name = "tool_accuracy"
 
@@ -126,11 +149,16 @@ class ToolAccuracy(base_metric.BaseMetric):
         expected_set = set(expected_tool.split(","))
         actual_set = set(called_tools.split(","))
 
-        if expected_set == actual_set:
+        if expected_set == {"none"} and actual_set == {"none"}:
             value = 1.0
-            reason = f"정확히 일치: {expected_set}"
+            reason = "도구 호출 없음 (정상)"
+        elif expected_set == {"none"} or actual_set == {"none"}:
+            value = 0.0
+            reason = f"불일치: 기대={expected_set}, 실제={actual_set}"
+        elif expected_set <= actual_set:
+            value = 1.0
+            reason = f"기대 도구 모두 포함: {expected_set}"
         elif expected_set & actual_set:
-            # 부분 일치 — 기대 도구 중 호출된 비율
             value = len(expected_set & actual_set) / len(expected_set)
             reason = f"부분 일치: 기대={expected_set}, 실제={actual_set}"
         else:
@@ -301,11 +329,16 @@ class LLMJudgeHelpfulness(base_metric.BaseMetric):
 # ──────────────────────────────────────────────
 # 5) 실험 실행
 # ──────────────────────────────────────────────
+DATASET_NAME = "doo_stock_agent_eval_v2"
+CSV_PATH = "datasets/stock_agent_eval.csv"
+
+
 def main():
     client = Opik()
 
-    # 기존 Dataset 가져오기 (Opik UI에서 이미 업로드한 데이터셋 사용)
-    dataset = client.get_dataset(name="doo_stock_agent_eval")
+    # 새 데이터셋 등록 (이미 존재하면 재사용)
+    setup_dataset(client, CSV_PATH, DATASET_NAME)
+    dataset = client.get_dataset(name=DATASET_NAME)
 
     # 판사 캐시 초기화
     _judge_cache.clear()
@@ -315,16 +348,13 @@ def main():
         dataset=dataset,
         task=evaluation_task,
         scoring_metrics=[
-            # 기존 규칙 기반 메트릭
             ToolAccuracy(),
             ResponseQuality(),
-            
-            # LLM-as-Judge 메트릭
             LLMJudgeAccuracy(),
             LLMJudgeCompleteness(),
             LLMJudgeHelpfulness(),
         ],
-        experiment_name="doo-stock-agent-experiment-with-judge",
+        experiment_name="doo-multi-agent-after",
         scoring_key_mapping={
             "called_tools": "called_tools",
             "expected_tool": "expected_tool",
@@ -332,10 +362,9 @@ def main():
             "input": "input",
             "category": "category",
         },
-        task_threads=1,  # 외부 API 호출이 많으므로 순차 실행
+        task_threads=1,
     )
 
-    # 결과 출력
     print("\n=== 실험 결과 ===")
     print(result)
 

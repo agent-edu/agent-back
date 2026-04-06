@@ -74,10 +74,10 @@ async def _load_corp_codes() -> list[dict]:
 
 @tool
 async def naver_search(query: str) -> str:
-    """네이버에서 최신 뉴스를 검색합니다. IPO, 공모주 관련 최신 소식을 찾을 때 유용합니다.
+    """네이버에서 최신 뉴스를 검색합니다. 주식, 시장 동향 관련 최신 소식을 찾을 때 유용합니다.
 
     Args:
-        query: 검색할 키워드 (예: "삼성전자 IPO", "공모주 청약 일정")
+        query: 검색할 키워드 (예: "삼성전자 실적", "반도체 시장 전망")
     """
     if not settings.NAVER_CLIENT_ID or not settings.NAVER_CLIENT_SECRET:
         return "네이버 검색을 사용하려면 .env에 NAVER_CLIENT_ID와 NAVER_CLIENT_SECRET을 설정해주세요."

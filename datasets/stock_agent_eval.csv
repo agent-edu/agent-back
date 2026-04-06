@@ -9,26 +9,31 @@ SK하이닉스 주가 조회해줘,get_stock_price,주가조회_한국
 엔비디아 시세 조회해줘,get_stock_price,주가조회_해외
 AAPL 주가 보여줘,get_stock_price,주가조회_해외
 마이크로소프트 주가 얼마야?,get_stock_price,주가조회_해외
-삼성전자 기업정보 알려줘,get_company_info,기업정보
-카카오 어떤 회사야?,get_company_info,기업정보
-현대자동차 대표이사가 누구야?,get_company_info,기업정보
-LG에너지솔루션 설립일 알려줘,get_company_info,기업정보
-네이버 홈페이지 주소 알려줘,get_company_info,기업정보
-최근 IPO 공시 검색해줘,search_ipo_disclosure,IPO공시
-2024년 증권신고서 검색해줘,search_ipo_disclosure,IPO공시
-올해 상장한 기업 공시 알려줘,search_ipo_disclosure,IPO공시
-LG에너지솔루션 IPO 공시 찾아줘,search_ipo_disclosure,IPO공시
-최근 투자설명서 제출한 기업 알려줘,search_ipo_disclosure,IPO공시
-카카오뱅크 공모가 얼마였어?,get_ipo_price_info,공모가
-LG에너지솔루션 공모가 정보 알려줘,get_ipo_price_info,공모가
-최근 상장한 기업 공모가 조회해줘,get_ipo_price_info,공모가
+삼성전자 RSI 지표 알려줘,get_technical_indicators,기술적분석
+테슬라 MACD 분석해줘,get_technical_indicators,기술적분석
+SK하이닉스 이동평균선 추세 어때?,get_technical_indicators,기술적분석
+엔비디아 볼린저밴드 분석해줘,get_technical_indicators,기술적분석
+카카오 기술적 분석 해줘,get_technical_indicators,기술적분석
+삼성전자 재무제표 요약해줘,get_financial_summary,재무분석
+테슬라 ROE랑 부채비율 알려줘,get_financial_summary,재무분석
+애플 최근 매출 추이 알려줘,get_financial_summary,재무분석
+현대차 영업이익률 어때?,get_financial_summary,재무분석
+SK하이닉스 재무 건전성 분석해줘,get_financial_summary,재무분석
+삼성전자 vs SK하이닉스 비교해줘,compare_stocks,종목비교
+테슬라 엔비디아 비교 분석해줘,compare_stocks,종목비교
+카카오 네이버 어디가 더 좋아?,compare_stocks,종목비교
+애플 마이크로소프트 비교해줘,compare_stocks,종목비교
+삼성전자 증권사 리포트 검색해줘,search_research_reports,리서치리포트
+반도체 산업 전망 리포트 찾아줘,search_research_reports,리서치리포트
+SK하이닉스 목표주가 알려줘,search_research_reports,리서치리포트
+현대차 투자의견 알려줘,search_research_reports,리서치리포트
 삼성전자 최신 뉴스 알려줘,naver_search,뉴스검색
-공모주 청약 일정 알려줘,naver_search,뉴스검색
 테슬라 관련 뉴스 찾아줘,naver_search,뉴스검색
 오늘 주식시장 동향 알려줘,naver_search,뉴스검색
-IPO 시장 최신 소식 알려줘,naver_search,뉴스검색
-삼성전자 종합 분석해줘,"get_stock_price,get_company_info,naver_search",종합분석
-카카오 투자 정보 종합적으로 알려줘,"get_stock_price,get_company_info,naver_search",종합분석
+반도체 업황 뉴스 알려줘,naver_search,뉴스검색
+삼성전자 종합 분석해줘,"get_stock_price,get_technical_indicators,get_financial_summary,search_research_reports,naver_search",종합분석
+SK하이닉스 종합적으로 분석해줘,"get_stock_price,get_technical_indicators,get_financial_summary,search_research_reports,naver_search",종합분석
+테슬라 투자 정보 종합적으로 알려줘,"get_stock_price,get_technical_indicators,get_financial_summary,search_research_reports,naver_search",종합분석
 PER이 뭐야?,none,일반지식
 주식 분할이 뭔가요?,none,일반지식
 공모주 청약 방법 알려줘,none,일반지식
