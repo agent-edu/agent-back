@@ -36,11 +36,16 @@ async def _get_checkpointer() -> AsyncSqliteSaver:
 # ──────────────────────────────────────────────
 # State 정의
 # ──────────────────────────────────────────────
+def _replace_sub_results(old: list[str], new: list[str]) -> list[str]:
+    """sub_results는 매 턴마다 덮어씁니다 (이전 턴 결과 누적 방지)."""
+    return new
+
+
 class SupervisorState(TypedDict):
     """Supervisor 그래프의 상태."""
-    messages: Annotated[list, operator.add]
+    messages: Annotated[list, operator.add]  # 멀티턴 대화 이력 누적
     query_type: str  # market / fundamental / research / comprehensive / general
-    sub_results: Annotated[list[str], operator.add]  # 서브에이전트 결과 수집
+    sub_results: Annotated[list[str], _replace_sub_results]  # 현재 턴 결과만 유지
 
 
 # ──────────────────────────────────────────────
@@ -61,9 +66,9 @@ async def classify_query(state: SupervisorState) -> dict:
 
 유형:
 - market: 주가, 시세, 차트, 기술적 분석, RSI, MACD, 이동평균 관련
-- fundamental: 재무제표, 매출, 이익, ROE, PER, 종목 비교 관련
+- fundamental: 재무제표, 매출, 이익, ROE, PER, 종목 비교 관련. "A vs B", "비교해줘" 등 2개 이상 종목을 비교하는 질문은 반드시 fundamental로 분류
 - research: 증권사 리포트, 목표주가, 투자의견, 뉴스, 전망 관련
-- comprehensive: 종합 분석, 전체 분석, "분석해줘" 같은 포괄적 요청
+- comprehensive: 단일 종목에 대한 종합 분석, 전체 분석, "종합 분석해줘" 같은 포괄적 요청 (단, 종목 비교는 fundamental)
 - general: 투자 용어 설명, 일반 지식 질문 등 도구 호출이 불필요한 질문
 
 사용자 질문: {last_message}
@@ -133,8 +138,9 @@ async def supervisor_synthesize(state: SupervisorState) -> dict:
     )
 
     sub_results = state.get("sub_results", [])
+    # 마지막 HumanMessage = 현재 턴의 질문
     user_msg = ""
-    for msg in state["messages"]:
+    for msg in reversed(state["messages"]):
         if isinstance(msg, HumanMessage):
             user_msg = msg.content
             break
@@ -192,7 +198,7 @@ def route_by_query_type(state: SupervisorState) -> str:
 async def planner_node(state: SupervisorState) -> dict:
     """종합 분석 전 분석 계획을 사용자에게 제시합니다."""
     user_msg = ""
-    for msg in state["messages"]:
+    for msg in reversed(state["messages"]):
         if isinstance(msg, HumanMessage):
             user_msg = msg.content
             break
@@ -223,7 +229,7 @@ async def all_analysts_node(state: SupervisorState) -> dict:
     import asyncio
 
     user_msg = ""
-    for msg in state["messages"]:
+    for msg in reversed(state["messages"]):
         if isinstance(msg, HumanMessage):
             user_msg = msg.content
             break

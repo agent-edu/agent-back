@@ -1,11 +1,8 @@
 """
-Opik Experiment 실행 스크립트 (멀티에이전트 버전)
+단일 에이전트(Before) 평가 스크립트
 
-사용법:
-    python -m scripts.run_experiment
-
-멀티에이전트(Supervisor + 3개 서브에이전트) 구조에 맞춰
-노드명 기반으로 호출된 도구를 추적하고, LLM-as-Judge로 품질을 평가합니다.
+동일 데이터셋·동일 도구로 단일 에이전트 vs 멀티에이전트 비교를 위해,
+모든 도구를 하나의 react agent에 넣고 기본 프롬프트로 실행합니다.
 """
 
 import asyncio
@@ -19,33 +16,47 @@ from opik import Opik, track
 from opik.evaluation import evaluate
 from opik.evaluation.metrics import base_metric, score_result
 from langchain_core.messages import HumanMessage
+from langgraph.prebuilt import create_react_agent
+from langchain_openai import ChatOpenAI
 
-from app.agents.stock_agent import create_stock_agent
+from app.agents.tools import (
+    get_stock_price,
+    get_technical_indicators,
+    get_financial_summary,
+    compare_stocks,
+    search_research_reports,
+    naver_search,
+)
 from app.core.config import settings
 
-# asyncio.run() 중첩 허용 (Opik evaluate 내부에서 이벤트 루프 사용)
 nest_asyncio.apply()
 
 
 # ──────────────────────────────────────────────
-# 멀티에이전트 노드 → 도구 매핑
+# 단일 에이전트용 기본 프롬프트 (멀티에이전트 이전 수준)
 # ──────────────────────────────────────────────
-NODE_TO_TOOLS = {
-    "market_analyst": ["get_stock_price", "get_technical_indicators"],
-    "fundamental_analyst": ["get_financial_summary", "compare_stocks"],
-    "research_analyst": ["search_research_reports", "naver_search"],
-    "all_analysts": [
-        "get_stock_price", "get_technical_indicators",
-        "get_financial_summary", "compare_stocks",
-        "search_research_reports", "naver_search",
-    ],
-}
+SINGLE_AGENT_PROMPT = """당신은 주식 전문가 AI 에이전트입니다.
+사용자의 주식 관련 질문에 정확하고 유용한 답변을 제공합니다.
+
+# 사용 가능한 도구:
+- get_stock_price: 실시간 시세 조회
+- get_technical_indicators: 기술적 지표 (RSI, MACD, 이동평균, 볼린저밴드)
+- get_financial_summary: 재무제표 요약
+- compare_stocks: 종목 비교
+- search_research_reports: 증권사 리포트 검색
+- naver_search: 네이버 뉴스 검색
+
+# 지침:
+- 확인되지 않은 데이터는 추측하지 않습니다.
+- 한국어로 답변합니다.
+- 투자 조언은 참고용이며 투자 판단은 본인 책임임을 안내합니다.
+"""
 
 
 # ──────────────────────────────────────────────
 # 1) Dataset 등록
 # ──────────────────────────────────────────────
-def setup_dataset(client: Opik, csv_path: str, dataset_name: str) -> None:
+def setup_dataset(client: Opik, csv_path: str, dataset_name: str):
     """CSV 파일을 읽어 Opik Dataset에 등록합니다."""
     dataset = client.get_or_create_dataset(name=dataset_name)
 
@@ -66,11 +77,36 @@ def setup_dataset(client: Opik, csv_path: str, dataset_name: str) -> None:
 
 
 # ──────────────────────────────────────────────
-# 2) 에이전트 실행 Task
+# 2) 단일 에이전트 생성
 # ──────────────────────────────────────────────
-@track(name="stock_agent_eval_multi")
+def _create_single_agent():
+    """모든 도구를 가진 단일 react agent를 생성합니다."""
+    llm = ChatOpenAI(
+        model=settings.OPENAI_MODEL,
+        api_key=settings.OPENAI_API_KEY,
+        temperature=0,
+    )
+    tools = [
+        get_stock_price,
+        get_technical_indicators,
+        get_financial_summary,
+        compare_stocks,
+        search_research_reports,
+        naver_search,
+    ]
+    return create_react_agent(
+        model=llm,
+        tools=tools,
+        prompt=SINGLE_AGENT_PROMPT,
+    )
+
+
+# ──────────────────────────────────────────────
+# 3) 에이전트 실행 Task
+# ──────────────────────────────────────────────
+@track(name="stock_agent_eval_single")
 def evaluation_task(dataset_item: dict) -> dict:
-    """Dataset 항목 하나에 대해 멀티에이전트를 실행합니다."""
+    """Dataset 항목 하나에 대해 단일 에이전트를 실행합니다."""
     user_input = dataset_item["input"]
     thread_id = str(uuid.uuid4())
 
@@ -81,18 +117,18 @@ def evaluation_task(dataset_item: dict) -> dict:
 
 
 async def _run_agent(user_input: str, thread_id: str) -> dict:
-    """멀티에이전트를 실행하고 호출된 노드와 최종 응답을 반환합니다."""
+    """단일 에이전트를 실행하고 호출된 도구와 최종 응답을 반환합니다."""
     from opik.integrations.langchain import OpikTracer
 
-    agent = await create_stock_agent()
+    agent = _create_single_agent()
 
     opik_tracer = OpikTracer(
         project_name="doo-project",
-        tags=["experiment", "multi-agent"],
+        tags=["experiment", "single-agent", "before"],
         metadata={"thread_id": thread_id},
     )
 
-    called_nodes = []
+    called_tools = []
     final_output = ""
 
     async for chunk in agent.astream(
@@ -103,46 +139,46 @@ async def _run_agent(user_input: str, thread_id: str) -> dict:
         },
         stream_mode="updates",
     ):
-        for node_name, event in chunk.items():
-            if not event:
+        for step, event in chunk.items():
+            if not event or step not in ("agent", "tools"):
                 continue
 
-            # 라우팅/분류 노드는 스킵
-            if node_name in ("classify", "planner"):
+            messages = event.get("messages", [])
+            if not messages:
                 continue
 
-            # 서브에이전트 노드 기록
-            if node_name in NODE_TO_TOOLS:
-                called_nodes.append(node_name)
+            message = messages[-1]
 
-            # synthesize → 최종 응답
-            if node_name == "synthesize":
-                messages = event.get("messages", [])
-                if messages:
-                    content = getattr(messages[-1], "content", "")
+            if step == "agent":
+                # 도구 호출 감지
+                tool_calls = getattr(message, "tool_calls", None)
+                if tool_calls:
+                    for tc in tool_calls:
+                        called_tools.append(tc["name"])
+                else:
+                    # 도구 호출 없이 최종 응답
+                    content = getattr(message, "content", "")
                     if content:
                         final_output = content
 
-    # 노드명 → 도구 매핑으로 called_tools 추론
-    called_tools = set()
-    for node in called_nodes:
-        called_tools.update(NODE_TO_TOOLS.get(node, []))
+            elif step == "tools":
+                # 도구 실행 후 최종 응답은 다음 agent 스텝에서 나옴
+                pass
+
+    # 마지막 메시지가 최종 응답일 수 있음
+    if not final_output:
+        final_output = "응답 생성 실패"
 
     return {
         "output": final_output,
-        "called_tools": ",".join(sorted(called_tools)) if called_tools else "none",
+        "called_tools": ",".join(sorted(set(called_tools))) if called_tools else "none",
     }
 
 
 # ──────────────────────────────────────────────
-# 3) 평가 메트릭 정의
+# 4) 평가 메트릭 (멀티에이전트 스크립트와 동일)
 # ──────────────────────────────────────────────
 class ToolAccuracy(base_metric.BaseMetric):
-    """에이전트가 올바른 도구를 호출했는지 평가합니다.
-    멀티에이전트에서는 서브에이전트 단위로 도구가 묶이므로,
-    expected_tool이 called_tools에 포함되는지로 판단합니다.
-    """
-
     name = "tool_accuracy"
 
     def score(self, called_tools: str, expected_tool: str, **kwargs) -> score_result.ScoreResult:
@@ -165,35 +201,23 @@ class ToolAccuracy(base_metric.BaseMetric):
             value = 0.0
             reason = f"불일치: 기대={expected_set}, 실제={actual_set}"
 
-        return score_result.ScoreResult(
-            name=self.name,
-            value=value,
-            reason=reason,
-        )
+        return score_result.ScoreResult(name=self.name, value=value, reason=reason)
 
 
 class ResponseQuality(base_metric.BaseMetric):
-    """응답이 비어있지 않고 충분한 길이인지 평가합니다."""
-
     name = "response_quality"
 
     def score(self, output: str, **kwargs) -> score_result.ScoreResult:
         if not output or len(output.strip()) == 0:
-            return score_result.ScoreResult(
-                name=self.name, value=0.0, reason="응답 없음"
-            )
+            return score_result.ScoreResult(name=self.name, value=0.0, reason="응답 없음")
         elif len(output) < 20:
-            return score_result.ScoreResult(
-                name=self.name, value=0.5, reason=f"응답이 짧음 ({len(output)}자)"
-            )
+            return score_result.ScoreResult(name=self.name, value=0.5, reason=f"응답이 짧음 ({len(output)}자)")
         else:
-            return score_result.ScoreResult(
-                name=self.name, value=1.0, reason=f"정상 응답 ({len(output)}자)"
-            )
+            return score_result.ScoreResult(name=self.name, value=1.0, reason=f"정상 응답 ({len(output)}자)")
 
 
 # ──────────────────────────────────────────────
-# 4) LLM-as-Judge 메트릭 정의
+# 5) LLM-as-Judge
 # ──────────────────────────────────────────────
 JUDGE_PROMPT = """당신은 AI 주식 에이전트의 응답 품질을 평가하는 전문 평가자입니다.
 
@@ -222,44 +246,30 @@ JUDGE_PROMPT = """당신은 AI 주식 에이전트의 응답 품질을 평가하
 ## 응답 형식 (반드시 이 JSON만 출력, 다른 텍스트 없이)
 {{"accuracy": <1-5>, "completeness": <1-5>, "helpfulness": <1-5>, "reasoning": "<평가 사유 한국어 2~3문장>"}}"""
 
-
 _openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+_judge_cache: dict[str, dict] = {}
 
 
 def _call_judge(input: str, output: str, called_tools: str, category: str) -> dict:
-    """GPT-4o 판사를 호출하여 응답 품질을 채점합니다."""
     prompt = JUDGE_PROMPT.format(
-        input=input,
-        output=output,
-        called_tools=called_tools,
-        category=category,
+        input=input, output=output, called_tools=called_tools, category=category,
     )
-
     response = _openai_client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
         max_tokens=300,
     )
-
     content = response.choices[0].message.content.strip()
-
-    # JSON 파싱 (코드블록으로 감싸져 있을 수 있음)
     if content.startswith("```"):
         content = content.split("```")[1]
         if content.startswith("json"):
             content = content[4:]
         content = content.strip()
-
     return json.loads(content)
 
 
-# 판사 결과 캐시 (같은 입력에 대해 3개 메트릭이 각각 호출되므로 중복 방지)
-_judge_cache: dict[str, dict] = {}
-
-
 def _get_judge_result(input: str, output: str, called_tools: str, category: str) -> dict:
-    """판사 결과를 캐시하여 동일 입력에 대한 중복 호출을 방지합니다."""
     cache_key = f"{input}||{output}"
     if cache_key not in _judge_cache:
         _judge_cache[cache_key] = _call_judge(input, output, called_tools, category)
@@ -267,28 +277,21 @@ def _get_judge_result(input: str, output: str, called_tools: str, category: str)
 
 
 class LLMJudgeAccuracy(base_metric.BaseMetric):
-    """LLM 판사가 응답의 정확성을 1~5점으로 평가합니다."""
-
     name = "llm_judge_accuracy"
 
     def score(self, output: str, input: str, called_tools: str, category: str, **kwargs) -> score_result.ScoreResult:
         try:
             result = _get_judge_result(input, output, called_tools, category)
-            value = result["accuracy"] / 5.0  # 0~1 스케일로 정규화
+            value = result["accuracy"] / 5.0
             return score_result.ScoreResult(
-                name=self.name,
-                value=value,
+                name=self.name, value=value,
                 reason=f"정확성 {result['accuracy']}/5 — {result.get('reasoning', '')}",
             )
         except Exception as e:
-            return score_result.ScoreResult(
-                name=self.name, value=0.0, reason=f"판사 호출 실패: {e}"
-            )
+            return score_result.ScoreResult(name=self.name, value=0.0, reason=f"판사 호출 실패: {e}")
 
 
 class LLMJudgeCompleteness(base_metric.BaseMetric):
-    """LLM 판사가 응답의 완전성을 1~5점으로 평가합니다."""
-
     name = "llm_judge_completeness"
 
     def score(self, output: str, input: str, called_tools: str, category: str, **kwargs) -> score_result.ScoreResult:
@@ -296,19 +299,14 @@ class LLMJudgeCompleteness(base_metric.BaseMetric):
             result = _get_judge_result(input, output, called_tools, category)
             value = result["completeness"] / 5.0
             return score_result.ScoreResult(
-                name=self.name,
-                value=value,
+                name=self.name, value=value,
                 reason=f"완전성 {result['completeness']}/5 — {result.get('reasoning', '')}",
             )
         except Exception as e:
-            return score_result.ScoreResult(
-                name=self.name, value=0.0, reason=f"판사 호출 실패: {e}"
-            )
+            return score_result.ScoreResult(name=self.name, value=0.0, reason=f"판사 호출 실패: {e}")
 
 
 class LLMJudgeHelpfulness(base_metric.BaseMetric):
-    """LLM 판사가 응답의 유용성을 1~5점으로 평가합니다."""
-
     name = "llm_judge_helpfulness"
 
     def score(self, output: str, input: str, called_tools: str, category: str, **kwargs) -> score_result.ScoreResult:
@@ -316,18 +314,15 @@ class LLMJudgeHelpfulness(base_metric.BaseMetric):
             result = _get_judge_result(input, output, called_tools, category)
             value = result["helpfulness"] / 5.0
             return score_result.ScoreResult(
-                name=self.name,
-                value=value,
+                name=self.name, value=value,
                 reason=f"유용성 {result['helpfulness']}/5 — {result.get('reasoning', '')}",
             )
         except Exception as e:
-            return score_result.ScoreResult(
-                name=self.name, value=0.0, reason=f"판사 호출 실패: {e}"
-            )
+            return score_result.ScoreResult(name=self.name, value=0.0, reason=f"판사 호출 실패: {e}")
 
 
 # ──────────────────────────────────────────────
-# 5) 실험 실행
+# 6) 실험 실행
 # ──────────────────────────────────────────────
 DATASET_NAME = "doo_stock_agent_eval_v2"
 CSV_PATH = "datasets/stock_agent_eval.csv"
@@ -336,14 +331,11 @@ CSV_PATH = "datasets/stock_agent_eval.csv"
 def main():
     client = Opik()
 
-    # 새 데이터셋 등록 (이미 존재하면 재사용)
     setup_dataset(client, CSV_PATH, DATASET_NAME)
     dataset = client.get_dataset(name=DATASET_NAME)
 
-    # 판사 캐시 초기화
     _judge_cache.clear()
 
-    # Experiment 실행
     result = evaluate(
         dataset=dataset,
         task=evaluation_task,
@@ -354,7 +346,7 @@ def main():
             LLMJudgeCompleteness(),
             LLMJudgeHelpfulness(),
         ],
-        experiment_name="doo-multi-agent-after",
+        experiment_name="doo-single-agent-before",
         scoring_key_mapping={
             "called_tools": "called_tools",
             "expected_tool": "expected_tool",
@@ -365,7 +357,7 @@ def main():
         task_threads=1,
     )
 
-    print("\n=== 실험 결과 ===")
+    print("\n=== Before (단일 에이전트) 실험 결과 ===")
     print(result)
 
 

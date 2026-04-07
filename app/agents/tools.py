@@ -163,7 +163,7 @@ async def _resolve_ticker(query: str) -> tuple[str, str, str] | None:
     stock_code = None
     corp_name_found = None
     for c in corps:
-        if c["stock_code"] and (c["corp_name"] == query or query in c["corp_name"]):
+        if c["stock_code"] and c["corp_name"] == query:
             stock_code = c["stock_code"]
             corp_name_found = c["corp_name"]
             break
